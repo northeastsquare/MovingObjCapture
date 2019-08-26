@@ -1,0 +1,45 @@
+-- Merging decision tree log ---
+manifest
+ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:2:1-9:12
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:2:1-9:12
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:2:1-9:12
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:2:1-9:12
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:2:1-9:12
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:2:1-9:12
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:2:1-9:12
+	package
+		ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:3:7-27
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
+	android:versionName
+		ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:5:7-34
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
+	xmlns:android
+		ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:2:11-69
+	android:versionCode
+		ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:4:7-33
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
+uses-permission#android.permission.CAMERA
+ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:6:5-65
+	android:name
+		ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:6:22-62
+uses-feature#android.hardware.camera2.full
+ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:7:5-66
+	android:name
+		ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:7:19-63
+uses-sdk
+ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:8:5-73
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:8:5-73
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:8:5-73
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:8:5-73
+INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:8:5-73
+	android:targetSdkVersion
+		ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:8:41-70
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
+	android:minSdkVersion
+		ADDED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml:8:15-40
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
+		INJECTED from D:\dianzicheng\AICamera\openCVLibrary347\src\main\AndroidManifest.xml
