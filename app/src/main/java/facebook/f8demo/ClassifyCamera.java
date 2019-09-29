@@ -39,9 +39,12 @@ import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.view.ViewTreeObserver;
 import android.view.Window;
+
 import android.view.WindowManager;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -59,39 +62,54 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
 import static android.view.View.SYSTEM_UI_FLAG_IMMERSIVE;
 import static java.lang.Math.abs;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 import static org.opencv.core.CvType.CV_64FC3;
 import static org.opencv.core.CvType.CV_8UC1;
 import static org.opencv.core.CvType.CV_8UC3;
+import static org.opencv.imgproc.Imgproc.COLOR_RGB2GRAY;
 import static org.opencv.imgproc.Imgproc.cvtColor;
+import static org.opencv.imgproc.Imgproc.moments;
 
 
 import org.opencv.core.Core;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.Point;
 import org.opencv.core.Scalar;
 import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
+import org.opencv.imgproc.Moments;
 import org.opencv.video.BackgroundSubtractor;
 import org.opencv.video.Video;
 import org.opencv.videoio.VideoCapture;
 import org.opencv.videoio.Videoio;
 import org.opencv.android.Utils;
+import facebook.f8demo.StorageHelper;
+import facebook.f8demo.TimeRunnable;
 
 public class ClassifyCamera extends AppCompatActivity {
     private static final String TAG = "F8DEMO";
     private static final int REQUEST_CAMERA_PERMISSION = 200;
-
     private TextureView textureView;
+    private ViewTreeObserver m_cViewTreeObserver = null;
+    int m_iCameraOrientation = 0;
+    int m_iTextureViewHeight=1;
+    int m_iTextureViewWidth=1;
+    private DrawRectangle m_cDrawRectangle;
     private ImageView bgView, fgView;
     private String cameraId;
     protected CameraDevice cameraDevice;
@@ -112,15 +130,30 @@ public class ClassifyCamera extends AppCompatActivity {
     private Mat mBGR = new Mat();
     private Mat frame = new Mat();
     private Mat fgMask = new Mat();
+    Bitmap bgbmp;
+    Bitmap fgbmp;
+    Mat imResized = new Mat();
+    private  Date m_dtLastSaveDate;
+    private  long m_lLastMilliSeconds=0;
+    long t4 = 0,t0=0;
+    int[] m_aPoint = new int[8];
+    int m_iArrayIndex = 0;
 
     private int m_nFrames4BG = 5;
     private BackgroundSubtractor backSub = null;
     private Queue m_qAreaSum;
+    private Queue m_qContourCenter;
     private double m_fLastEMA = 0.0;
+    private double m_fLastContour2Center = 0.0;
     double m_nUpEMA = 0;
     double m_nDownEMA = 0;
+    double m_nAwayFrame=0;
     private int iImageIdx = -1;
     private double[] tmp = null;
+    private StorageHelper m_cStorageHelper= null;
+    private String m_sExternalRoot = null;
+    String fullname;
+    ArrayList<MatOfPoint> m_alScale = new ArrayList<MatOfPoint>();
 
     static {
         System.loadLibrary("native-lib");
@@ -154,8 +187,15 @@ public class ClassifyCamera extends AppCompatActivity {
         this.requestWindowFeature(Window.FEATURE_NO_TITLE);
         backSub = Video.createBackgroundSubtractorMOG2(5, 16, false);
         m_qAreaSum = new LinkedList();
+        m_qContourCenter = new LinkedList();
         mgr = getResources().getAssets();
-
+//        m_cStorageHelper = new StorageHelper();
+//        List<StorageHelper.StorageVolume> lst= m_cStorageHelper.getStorages(true);
+//        for (StorageHelper.StorageVolume sv:lst){
+//            if(sv.isRemovable() == true){
+//                m_sExternalRoot = sv.file.toString();
+//            }
+//        }
         new SetUpNeuralNetwork().execute();
 
         View decorView = getWindow().getDecorView();
@@ -166,10 +206,30 @@ public class ClassifyCamera extends AppCompatActivity {
 
         textureView = (TextureView) findViewById(R.id.textureView);
         textureView.setSystemUiVisibility(SYSTEM_UI_FLAG_IMMERSIVE);
+        m_cViewTreeObserver = textureView.getViewTreeObserver();
+        m_cViewTreeObserver.addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                // TODO Auto-generated method stub
+                m_iTextureViewHeight = textureView.getHeight();
+                m_iTextureViewWidth = textureView.getWidth();
+                textureView.getViewTreeObserver().removeGlobalOnLayoutListener(
+                        this);
+                Toast.makeText(ClassifyCamera.this,"m_iTextureViewHeight:"+m_iTextureViewHeight+" "+m_iTextureViewHeight,3000).show();
+            }
+        });
+
+
+        Log.i(TAG, "m_iTextureViewHeight:"+m_iTextureViewHeight+"  "+m_iTextureViewWidth);
+        LinearLayout surfaceView =  (LinearLayout)findViewById(R.id.surface);
+        m_cDrawRectangle = new DrawRectangle(this);
+        surfaceView.addView(m_cDrawRectangle);
+
         bgView = (ImageView) findViewById(R.id.bgView);
         bgView.setSystemUiVisibility(SYSTEM_UI_FLAG_IMMERSIVE);
         fgView = (ImageView) findViewById(R.id.fgView);
         fgView.setSystemUiVisibility(SYSTEM_UI_FLAG_IMMERSIVE);
+
         final GestureDetector gestureDetector = new GestureDetector(this.getApplicationContext(),
                 new GestureDetector.SimpleOnGestureListener() {
                     @Override
@@ -190,6 +250,15 @@ public class ClassifyCamera extends AppCompatActivity {
 
                     @Override
                     public boolean onDown(MotionEvent e) {
+                        int x = (int) e.getX(0);
+                        int y = (int) e.getY(0);
+                        m_aPoint[m_iArrayIndex++] = x;
+                        m_aPoint[m_iArrayIndex++] = y;
+                        if (m_iArrayIndex==8){
+                            m_cDrawRectangle.setPTS(m_aPoint);
+                        }
+                        m_iArrayIndex = m_iArrayIndex % 8;
+
                         return true;
                     }
                 });
@@ -263,6 +332,74 @@ public class ClassifyCamera extends AppCompatActivity {
             e.printStackTrace();
         }
     }
+    public static Mat imageToMatSimple(Image image){
+        ByteBuffer Ybuffer = image.getPlanes()[0].getBuffer();
+        ByteBuffer Ubuffer = image.getPlanes()[1].getBuffer();
+        ByteBuffer Vbuffer = image.getPlanes()[2].getBuffer();
+
+        int ySize = Ybuffer.remaining();
+        int uSize = Ubuffer.remaining();
+        int vSize = Vbuffer.remaining();
+
+        byte[] nv21 = new byte[ySize + uSize + vSize];
+        Ybuffer.get(nv21, 0, ySize);
+//        Ubuffer.get(nv21, ySize, uSize);
+//        Vbuffer.get(nv21, ySize + uSize, vSize);
+        Vbuffer.get(nv21, ySize, vSize);
+        Ubuffer.get(nv21, ySize + vSize, uSize);
+        Mat mat = new Mat(image.getHeight() + image.getHeight() / 2, image.getWidth(), CV_8UC1);
+        mat.put(0, 0, nv21);
+        return mat;
+    }
+    public static Mat imageToMat(Image image) {
+        ByteBuffer buffer;
+        int rowStride;
+        int pixelStride;
+        int width = image.getWidth();
+        int height = image.getHeight();
+        int offset = 0;
+
+        Image.Plane[] planes = image.getPlanes();
+        byte[] data = new byte[image.getWidth() * image.getHeight() * ImageFormat.getBitsPerPixel(ImageFormat.YUV_420_888) / 8];
+        byte[] rowData = new byte[planes[0].getRowStride()];
+
+        for (int i = 0; i < planes.length; i++) {
+            buffer = planes[i].getBuffer();
+            rowStride = planes[i].getRowStride();
+            pixelStride = planes[i].getPixelStride();
+            int w = (i == 0) ? width : width / 2;
+            int h = (i == 0) ? height : height / 2;
+            for (int row = 0; row < h; row++) {
+                int bytesPerPixel = ImageFormat.getBitsPerPixel(ImageFormat.YUV_420_888) / 8;
+                if (pixelStride == bytesPerPixel) {
+                    int length = w * bytesPerPixel;
+                    buffer.get(data, offset, length);
+
+                    if (h - row != 1) {
+                        buffer.position(buffer.position() + rowStride - length);
+                    }
+                    offset += length;
+                } else {
+
+
+                    if (h - row == 1) {
+                        buffer.get(rowData, 0, width - pixelStride + 1);
+                    } else {
+                        buffer.get(rowData, 0, rowStride);
+                    }
+
+                    for (int col = 0; col < w; col++) {
+                        data[offset++] = rowData[col * pixelStride];
+                    }
+                }
+            }
+        }
+
+        Mat mat = new Mat(height + height / 2, width, CV_8UC1);
+        mat.put(0, 0, data);
+
+        return mat;
+    }
 
     protected void createCameraPreview() {
         try {
@@ -270,15 +407,20 @@ public class ClassifyCamera extends AppCompatActivity {
             assert texture != null;
             texture.setDefaultBufferSize(imageDimension.getWidth(), imageDimension.getHeight());
             Surface surface = new Surface(texture);
+            int screenWidth = this.getApplicationContext().getResources().getDisplayMetrics().widthPixels;
+            int screenHeight = this.getApplicationContext().getResources().getDisplayMetrics().heightPixels;
+            int caph = 0, capw = 0;
+            m_iTextureViewHeight = textureView.getHeight();
+            m_iTextureViewWidth = textureView.getWidth();
 
-            int width = 227;
-            int height = 227;
-            ImageReader reader = ImageReader.newInstance(width, height, ImageFormat.YUV_420_888, 4);
+
+            ImageReader reader = ImageReader.newInstance(screenWidth, screenHeight, ImageFormat.YUV_420_888, 4);
             ImageReader.OnImageAvailableListener readerListener = new ImageReader.OnImageAvailableListener() {
                 @Override
                 public void onImageAvailable(ImageReader reader) {
                     try {
-
+                        //long
+                        //t0 = System.currentTimeMillis();
                         image = reader.acquireNextImage();
                         iImageIdx++;
                         /*if (iImageIdx % 5 != 0)
@@ -292,74 +434,95 @@ public class ClassifyCamera extends AppCompatActivity {
                         processing = true;
 
 
-                        int w = image.getWidth();
-                        int h = image.getHeight();
-                        ByteBuffer Ybuffer = image.getPlanes()[0].getBuffer();
-                        ByteBuffer Ubuffer = image.getPlanes()[1].getBuffer();
-                        ByteBuffer Vbuffer = image.getPlanes()[2].getBuffer();
-
-                        int ySize = Ybuffer.remaining();
-                        int uSize = Ubuffer.remaining();
-                        int vSize = Vbuffer.remaining();
-
-                        byte[] nv21 = new byte[ySize + uSize + vSize];
-                        byte[] y = new byte[ySize];
-                        byte[] u = new byte[uSize];
-                        byte[] v = new byte[vSize];
-                        Ybuffer.get(nv21, 0, ySize);
-                        Vbuffer.get(nv21, ySize, vSize);
-                        Ubuffer.get(nv21, ySize + vSize, uSize);
-
-                        Ybuffer.rewind();
-                        Ubuffer.rewind();
-                        Vbuffer.rewind();
-                        Ybuffer.get(y, 0, ySize);
-                        Ubuffer.get(u, 0, uSize);
-                        Vbuffer.get(v, 0, vSize);
-                        /*for (int i =0;i < ySize;i++){
-                            y[i] = (nv21[i]);
+                        //long t1 = System.currentTimeMillis();
+                        //Log.i(TAG, "timing t01:"+(t1-t0));
+                        mYuv = imageToMat(image);
+                        if (m_iCameraOrientation == 270) {
+                            // Rotate clockwise 270 degrees
+                            Core.flip(mYuv.t(), mYuv, 0);
+                        } else if (m_iCameraOrientation == 180) {
+                            // Rotate clockwise 180 degrees
+                            Core.flip(mYuv, mYuv, -1);
+                        } else if (m_iCameraOrientation == 90) {
+                            //  90 dRotate clockwiseegrees
+                            Core.flip(mYuv.t(), mYuv, 1);
                         }
-                        int starti = ySize;
-                        for (int i =starti;i <starti+ uSize;i++){
-                            u[i-starti] = (nv21[i]);
-                        }
-                        starti = starti+ uSize;
-                        for (int i =starti;i <starti+ vSize;i++){
-                            v[i-starti] = (nv21[i]);
-                        }*/
-                        mYuv = new Mat(image.getHeight() + image.getHeight() / 2, image.getWidth(), CV_8UC1);
-                        mYuv.put(0, 0, nv21);
-                        //mBGR = new Mat(image.getHeight(), image.getWidth(), CV_64FC3 );
-                        /*tmp = new double[w*h*3];
-                        for (int i =0;i < h;i++){
-                            for(int j = 0;j<w;j++){
-                                double yy = y[i*w+j] & 0xff;
-                                double uu = u[i/2*w/2+j/2] & 0xff;
-                                double vv = v[i/2*w/2+j/2] & 0xff;
-                                //tmp[i*w+j+0]=  yy+1.732446 *(uu-128);//Y + 1.772 (U-V)//black
-                                //tmp[i*w+j+1]=yy-(0.698001 * (vv-128)) - (0.337633 * (uu-128));//   0.34414*(uu-128)-0.71414*(vv-128);//G = Y - 0.34414 (U-128) - 0.71414 (V-128)
-                                //tmp[i*w+j+2]=yy+(1.370705 * (vv-128));//1.402*(vv-128);//R = Y + 1.402 (V-128)
-                                tmp[i*w*3+3*j+0] = yy + 1.770*( uu-128);//128.0);
-                                tmp[i*w*3+3*j+1] = yy-0.343*(uu-128.0)-0.714*(vv-128.0);
-                                tmp[i*w*3+3*j+2] = yy+1.403*(vv-128.0);
-                            }
-                        }
-                        mBGR = new Mat(h, w, CV_64FC3);
-                        mBGR.put(0, 0,tmp);*/
+                        int width = mYuv.width();// image.getWidth();
+                        int height = mYuv.height();//image.getHeight();
+                        //long t2 = System.currentTimeMillis();
+                       // Log.i(TAG, "timing t12:"+(t2-t1));
+                        //mYuv = imageToMatSimple(image);
 
-                        //mYuv = imageToMat( image);
-                        Mat mGray = new Mat();
-                        cvtColor(mYuv, mGray, Imgproc.COLOR_YUV2GRAY_NV21, 3);
-                        cvtColor(mYuv, mBGR, Imgproc.COLOR_YUV420sp2BGR, 3);
-                        frame = mGray;
-                        backSub.apply(mBGR, fgMask);
+                        //Mat mGray = new Mat();
+                        Mat mRGB = new Mat();
+                        //cvtColor(mYuv, mGray, Imgproc.COLOR_YUV2GRAY_NV21, 3);
+                        cvtColor(mYuv, mBGR, Imgproc.COLOR_YUV2BGR_I420, 3);
+                        cvtColor(mYuv, mRGB, Imgproc.COLOR_YUV2RGBA_I420, 4);
+                        frame = mRGB;
+                        //long t3 = System.currentTimeMillis();
+                        //Log.i(TAG, "timing t23:"+(t3-t2));
+                        double rate = Math.sqrt((300.*400)/(width*height));
+                        int neww = (int)(width*rate);
+                        int newh = (int)(height*rate);
+
+                        Imgproc.resize(mBGR,imResized, new org.opencv.core.Size(neww, newh));
+                        bgbmp = Bitmap.createBitmap(imResized.width(), imResized.height(), Bitmap.Config.ARGB_8888);
+
+                        //get quadrilateral mask
+                        double xrate = 1.0*neww/m_iTextureViewWidth;
+                        double yrate = 1.0*newh/m_iTextureViewHeight;
+                        int [] impts = new int[8];
+                        impts[0] = (int)(m_aPoint[0]*xrate);
+                        impts[1] = (int)(m_aPoint[1]*yrate);
+                        impts[2] = (int)(m_aPoint[2]*xrate);
+                        impts[3] = (int)(m_aPoint[3]*yrate);
+                        impts[4] = (int)(m_aPoint[4]*xrate);
+                        impts[5] = (int)(m_aPoint[5]*yrate);
+                        impts[6] = (int)(m_aPoint[6]*xrate);
+                        impts[7] = (int)(m_aPoint[7]*yrate);
+
+                        List<MatOfPoint> border = new ArrayList<MatOfPoint>();
+                        border.add(new MatOfPoint(new Point(impts[0],impts[1]), new Point(impts[2],impts[3]), new Point(impts[4],impts[5]), new Point(impts[6],impts[7])));
+                        Mat mask = Mat.zeros(newh, neww, CV_8UC3);
+                        Imgproc.fillPoly(mask, border, new Scalar(255,255,255));
+                        Core.bitwise_and(imResized, mask, imResized);
+                        Utils.matToBitmap(imResized, bgbmp);
+                        backSub.apply(imResized, fgMask);
+                        fgbmp = Bitmap.createBitmap(fgMask.width(), fgMask.height(), Bitmap.Config.ARGB_8888);
+                        Utils.matToBitmap(fgMask, fgbmp);
+                        fgbmp = Bitmap.createScaledBitmap(fgbmp, fgView.getWidth(), fgView.getHeight(), true);
+                        //long t4 = System.currentTimeMillis();
+                        //t4 = System.currentTimeMillis();
+                        //Log.i(TAG, "timing t34:"+(t4-t3));
+                        TimeRunnable tr = new TimeRunnable() {
+                            @Override
+                            public void run() {
+                                //tv.setText(predictedClass);
+                                //String ss = "tview";
+                                //tv.setText(ss);
+                                //Imgproc.cvtColor(frame, frame, Imgproc.COLOR_GRAY2RGBA, 4);
+                                //long tui1 = System.currentTimeMillis();
+                                bgView.setImageBitmap(bgbmp);
+                                bgView.invalidate();
+                                bgView.setVisibility(View.VISIBLE);
+
+                                //Imgproc.cvtColor(fgMask, fgMask, Imgproc.COLOR_GRAY2RGBA, 4);
+
+                                fgView.setImageBitmap(fgbmp);
+                                fgView.invalidate();
+                                fgView.setVisibility(View.VISIBLE);
+                                //long tui2 = System.currentTimeMillis();
+                                //Log.i(TAG, "timing tui:"+(tui2-tui1)+ " subtractouttime:"+(tui2-t));
+//                                Toast.makeText(ClassifyCamera.this,
+//                                        fullname,
+//                                        Toast.LENGTH_SHORT).show();
+                            }};
+                        //tr.setTime(t0);
+                        runOnUiThread( tr);
 
                         //! [display_frame_number]
                         // get the frame number and write it on the current frame
-                        Imgproc.rectangle(frame, new Point(10, 2), new Point(100, 20), new Scalar(255, 255, 255), -1);
-
-
-
+                        //Imgproc.rectangle(frame, new Point(10, 2), new Point(100, 20), new Scalar(255, 255, 255), -1);
                         /*String frameNumberString = String.format("%d", (int)capture.get(Videoio.CAP_PROP_POS_FRAMES));
                         Imgproc.putText(frame, frameNumberString, new Point(15, 15), Core.FONT_HERSHEY_SIMPLEX, 0.5,
                                 new Scalar(0, 0, 0));*/
@@ -367,34 +530,62 @@ public class ClassifyCamera extends AppCompatActivity {
 
 
                         // TODO: use these for proper image processing on different formats.
-                        int rowStride = image.getPlanes()[1].getRowStride();
-                        int pixelStride = image.getPlanes()[1].getPixelStride();
-                        Ybuffer.rewind();
-                        Ubuffer.rewind();
-                        Vbuffer.rewind();
-                        byte[] Y = new byte[Ybuffer.capacity()];
-                        byte[] U = new byte[Ubuffer.capacity()];
-                        byte[] V = new byte[Vbuffer.capacity()];
-                        Ybuffer.get(Y);
-                        Ubuffer.get(U);
-                        Vbuffer.get(V);
-                        hasChanged = false;
-                        double rate = 0.0;
+//                        int rowStride = image.getPlanes()[1].getRowStride();
+//                        int pixelStride = image.getPlanes()[1].getPixelStride();
+//                        Ybuffer.rewind();
+//                        Ubuffer.rewind();
+//                        Vbuffer.rewind();
+//                        byte[] Y = new byte[Ybuffer.capacity()];
+//                        byte[] U = new byte[Ubuffer.capacity()];
+//                        byte[] V = new byte[Vbuffer.capacity()];
+//                        Ybuffer.get(Y);
+//                        Ubuffer.get(U);
+//                        Vbuffer.get(V);
+                        //hasChanged = false;
+                        //double rate = 0.0;
                         ArrayList<MatOfPoint> contours = new ArrayList<MatOfPoint>();
                         Mat hierarchy = new Mat();
                         Imgproc.findContours(fgMask, contours, hierarchy, Imgproc.RETR_TREE, Imgproc.CHAIN_APPROX_SIMPLE, new Point(0, 0));
 
+                        TreeMap<Double, Integer> tm=new TreeMap<Double, Integer>();
                         Iterator<MatOfPoint> iterator = contours.iterator();
                         double area_sum = 0;
+                        int i =0;
+                        //long t5 = System.currentTimeMillis();
+                        //Log.i(TAG, "timing t45:"+(t5-t4));
                         while (iterator.hasNext()) {
                             MatOfPoint contour = iterator.next();
                             double area = Imgproc.contourArea(contour);
                             Log.i(TAG, "area:" + area + " area_sum:" + area_sum);
                             if (area > 100) {
                                 area_sum += area;
+                                tm.put(area, i);
                             }
+                            i++;
                         }
-                        //double sma = 0.0;
+                        //long t6 = System.currentTimeMillis();
+                        //Log.i(TAG, "timing t56:"+(t6-t5)+" curenttotal:"+(t6-t0));
+                        if (area_sum < 1000){
+                            m_qAreaSum.clear();
+                            m_qContourCenter.clear();
+                            processing = false;
+                            return;
+                        }
+
+                        Iterator<Integer> it = tm.values().iterator();
+                        i=0;
+                        double xs = 0, ys=0;
+                        int npt = 0;
+                        double dst = 0;
+                        while(it.hasNext()){
+                            Integer idx =  it.next();
+                            MatOfPoint c = contours.get(idx);
+                            Moments p = Imgproc.moments(c);
+                            int x = (int) (p.get_m10() / p.get_m00());
+                            int yy = (int) (p.get_m01() / p.get_m00());
+                            dst = Math.sqrt(Math.pow(x-width/2, 2) + Math.pow(yy-height/2, 2));
+                            break;
+                        }
                         double ema = 0.0;
 
                         if (m_qAreaSum.size() < m_nFrames4BG) {
@@ -403,13 +594,8 @@ public class ClassifyCamera extends AppCompatActivity {
                             m_qAreaSum.remove();
                             m_qAreaSum.add(area_sum);
                         }
-                        Iterator it = m_qAreaSum.iterator();
-                        double s = 0;
-                        for (Object as : m_qAreaSum) {
-                            s += (double) (as);
-                        }
-                        sma = s / m_qAreaSum.size();
                         ema = (area_sum - m_fLastEMA) * 2 / (1 + m_qAreaSum.size()) + m_fLastEMA;
+                        double dstEMA = (dst - m_fLastContour2Center)*2/(1+m_qAreaSum.size())+m_fLastContour2Center;
                         if (ema >= m_fLastEMA) {
                             m_nUpEMA++;
                             m_nDownEMA = 0;
@@ -417,32 +603,54 @@ public class ClassifyCamera extends AppCompatActivity {
                             m_nUpEMA = 0;
                             m_nDownEMA++;
                         }
-                        if (m_nDownEMA < 3) {
+                        m_nUpEMA = min(max(m_nUpEMA, -5), 5);
+                        m_nDownEMA = min(max(m_nDownEMA, -5), 5);
+                        if (area_sum > 100) {
+                            if (dstEMA >= m_fLastContour2Center) {
+                                m_nAwayFrame++;
+                            } else {
+                                m_nAwayFrame--;
+                            }
+                            m_nAwayFrame = min(max(m_nAwayFrame, -5), 5);
+                        }
+                        else{
+                            m_nUpEMA = 0;
+                            m_nDownEMA = 0;
+                            m_nAwayFrame = 0;
+                        }
+                        Log.i(TAG, "m_fLastEMA:"+m_fLastEMA+" ema:"+ema+" m_fLastContour2Center:"+
+                                m_fLastContour2Center+" dstEMA:"+dstEMA+ " m_nAwayFrame:"+m_nAwayFrame+
+                                "m_nDownEMA:"+m_nDownEMA+" area_sum:"+area_sum);
+                        m_fLastContour2Center = dstEMA;
+                        m_fLastEMA = ema;
+                        if (m_nDownEMA < 3 && (area_sum > width*height*0.1) || m_nAwayFrame > -1|| area_sum > width*height*0.4) {
+                            processing = false;
                             return;
                         }
 
-                        m_fLastEMA = ema;
-
-//                        if (area_sum<1000){
-////                            Toast.makeText(ClassifyCamera.this,
-////                                    "area_sum:"+area_sum,
-////                                    Toast.LENGTH_SHORT).show();
-////                            processing = false;
-////                          return;
-////                          }
+                        fullname="";
                         if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED))
                         // 判断是否可以对SDcard进行操作
                         {      // 获取SDCard指定目录下
                             Date c = Calendar.getInstance().getTime();
+                            long milliSec = c.getTime();
+                            if (milliSec - m_lLastMilliSeconds <1000){
+                                processing = false;
+                                return;
+                            }
+                            m_lLastMilliSeconds = milliSec;
                             Log.i(TAG, "Current time => " + c);
                             SimpleDateFormat datef = new SimpleDateFormat("yyyy-MM-dd");
                             SimpleDateFormat timef = new SimpleDateFormat("HH-mm-ss");
 
                             String formattedDate = datef.format(c);
                             String formattedTime = timef.format(c);
-                            String sdCardDir = Environment.getExternalStorageDirectory() + "/CoolImage/" + formattedDate + "/";
+                            //String sdCardDir = "/storage/emulated/0/aaaaaa/" + formattedDate + "/";
+                            String sdCardDir = Environment.getExternalStorageDirectory()+ "/aaaaaa/" + formattedDate + "/";
+                            //String sdCardDir = m_sExternalRoot + "/Android/data/facebook.f8demo/";
+
                             File dirFile = new File(sdCardDir);  //目录转化成文件夹
-                            if (!dirFile.exists()) {                //如果不存在，那就建立这个文件夹
+                            if (!dirFile.exists() && false) {                //如果不存在，那就建立这个文件夹
                                 //dirFile .mkdirs();
                                 Toast.makeText(ClassifyCamera.this,
                                         (dirFile.mkdirs() ? "Directory has been created" : "Directory not created"),
@@ -450,42 +658,26 @@ public class ClassifyCamera extends AppCompatActivity {
                             }
                             //文件夹有啦，就可以保存图片啦
                             String fname = formattedTime + "-" + System.currentTimeMillis() + ".jpg";
-                            String fullname = sdCardDir + fname;
+                            fullname = sdCardDir + fname;
                             Imgcodecs.imwrite(fullname, mBGR);
                             Log.i(TAG, "保存到_sd_指定目录文件夹下_" + fullname);
+//                            runOnUiThread(new Runnable() {
+//                                @Override
+//                                public void run() {
+//                                    Toast.makeText(ClassifyCamera.this,
+//                                            "saved :" + fullname,
+//                                            Toast.LENGTH_SHORT).show();
+//                                }
+//                            });
                         }
-                        predictedClass = classificationFromCaffe2(h, w, Y, U, V,
-                                rowStride, pixelStride, run_HWC);
-                        predictedClass = predictedClass;  //+ " rate:"+rate;
-                        runOnUiThread(new Runnable() {
-                            @Override
-                            public void run() {
-                                tv.setText(predictedClass);
-                                //String ss = "tview";
-                                //tv.setText(ss);
-                                //Imgproc.cvtColor(frame, frame, Imgproc.COLOR_GRAY2RGBA, 4);
-                                Bitmap bgbmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888);
-                                Utils.matToBitmap(frame, bgbmp);
-                                bgView.setImageBitmap(bgbmp);
-                                bgView.invalidate();
-                                bgView.setVisibility(View.VISIBLE);
+//                        predictedClass = classificationFromCaffe2(h, w, Y, U, V,
+//                                rowStride, pixelStride, run_HWC);
+//                        predictedClass = predictedClass;  //+ " rate:"+rate;
 
-                                //Imgproc.cvtColor(fgMask, fgMask, Imgproc.COLOR_GRAY2RGBA, 4);
-                                Bitmap fgbmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888);
-                                Utils.matToBitmap(fgMask, fgbmp);
-                                fgbmp = Bitmap.createScaledBitmap(fgbmp, fgView.getWidth(), fgView.getHeight(), true);
-                                fgView.setImageBitmap(fgbmp);
-                                fgView.invalidate();
-                                fgView.setVisibility(View.VISIBLE);
-
-                            }
-
-
-                        });
                         processing = false;
-
-
-                    } finally {
+                        //long t7 = System.currentTimeMillis();
+                        //Log.i(TAG, "timing t67:"+(t7-t6)+" total:"+(t7-t0));
+                        } finally {
                         if (image != null) {
                             image.close();
                         }
@@ -524,6 +716,7 @@ public class ClassifyCamera extends AppCompatActivity {
             cameraId = manager.getCameraIdList()[0];
             CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
             StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+            m_iCameraOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
             assert map != null;
             imageDimension = map.getOutputSizes(SurfaceTexture.class)[0];
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
