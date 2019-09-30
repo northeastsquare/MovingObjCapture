@@ -12,17 +12,21 @@
 
     <TextureView
         android:id="@+id/textureView"
-        android:layout_width="364dp"
-        android:layout_height="380dp"
-        android:layout_marginTop="8dp"
-        android:layout_marginEnd="16dp"
+        android:layout_width="257dp"
+        android:layout_height="265dp"
+        android:layout_marginStart="0dp"
+        android:layout_marginTop="0dp"
+        android:layout_marginEnd="0dp"
         app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.415"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
     <LinearLayout
         android:id="@+id/surface"
-        android:layout_width="364dp"
-        android:layout_height="380dp"
+        android:layout_width="257dp"
+        android:layout_height="265dp"
+        android:layout_marginBottom="0dp"
         android:orientation="vertical"
         app:layout_constraintBottom_toTopOf="@+id/bgView"
         app:layout_constraintStart_toStartOf="@+id/textureView"
@@ -30,36 +34,30 @@
         app:layout_constraintVertical_bias="0.0" />
 
 
-    <TextView
-        android:id="@+id/sample_text"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:background="#AA000000"
-        android:text="Loading..."
-        android:textAllCaps="true"
-        android:textColor="@android:color/white"
-        android:textStyle="bold"
-        app:layout_constraintHorizontal_bias="0.0"
-        app:layout_constraintLeft_toLeftOf="parent"
-        app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
     <ImageView
         android:id="@+id/bgView"
-        android:layout_width="364dp"
-        android:layout_height="162dp"
-        android:layout_marginTop="12dp"
-        app:layout_constraintEnd_toEndOf="@+id/fgView"
+        android:layout_width="200dp"
+        android:layout_height="200dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="8dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/textureView"
         tools:srcCompat="@tools:sample/backgrounds/scenic[0]" />
 
     <ImageView
         android:id="@+id/fgView"
-        android:layout_width="336dp"
-        android:layout_height="151dp"
-        android:layout_marginTop="12dp"
+        android:layout_width="230dp"
+        android:layout_height="196dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/bgView"
-        tools:layout_editor_absoluteX="37dp"
+        app:layout_constraintVertical_bias="1.0"
         tools:srcCompat="@tools:sample/avatars[1]" />
 
 </android.support.constraint.ConstraintLayout>

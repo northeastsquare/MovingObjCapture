@@ -76,6 +76,7 @@ import static android.view.View.SYSTEM_UI_FLAG_IMMERSIVE;
 import static java.lang.Math.abs;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static org.opencv.core.Core.sumElems;
 import static org.opencv.core.CvType.CV_64FC3;
 import static org.opencv.core.CvType.CV_8UC1;
 import static org.opencv.core.CvType.CV_8UC3;
@@ -144,7 +145,7 @@ public class ClassifyCamera extends AppCompatActivity {
     private Queue m_qAreaSum;
     private Queue m_qContourCenter;
     private double m_fLastEMA = 0.0;
-    private double m_fLastContour2Center = 0.0;
+    //private double m_fLastContour2Center = 0.0;
     double m_nUpEMA = 0;
     double m_nDownEMA = 0;
     double m_nAwayFrame=0;
@@ -215,12 +216,21 @@ public class ClassifyCamera extends AppCompatActivity {
                 m_iTextureViewWidth = textureView.getWidth();
                 textureView.getViewTreeObserver().removeGlobalOnLayoutListener(
                         this);
-                Toast.makeText(ClassifyCamera.this,"m_iTextureViewHeight:"+m_iTextureViewHeight+" "+m_iTextureViewHeight,3000).show();
+                m_aPoint[0]=0;
+                m_aPoint[1]=0;
+                m_aPoint[2]=m_iTextureViewWidth-1;
+                m_aPoint[3]=0;
+                m_aPoint[4]=m_iTextureViewWidth-1;
+                m_aPoint[5]=m_iTextureViewHeight-1;
+                m_aPoint[6]=0;
+                m_aPoint[7]=m_iTextureViewHeight-1;
+                Toast.makeText(ClassifyCamera.this,"wh:"+m_iTextureViewWidth+" "+m_iTextureViewHeight,3000).show();
+                Log.i(TAG, "m_iTextureViewHeight:"+m_iTextureViewHeight+"  "+m_iTextureViewWidth);
             }
         });
 
 
-        Log.i(TAG, "m_iTextureViewHeight:"+m_iTextureViewHeight+"  "+m_iTextureViewWidth);
+
         LinearLayout surfaceView =  (LinearLayout)findViewById(R.id.surface);
         m_cDrawRectangle = new DrawRectangle(this);
         surfaceView.addView(m_cDrawRectangle);
@@ -252,6 +262,7 @@ public class ClassifyCamera extends AppCompatActivity {
                     public boolean onDown(MotionEvent e) {
                         int x = (int) e.getX(0);
                         int y = (int) e.getY(0);
+                        Log.i(TAG, "x y:"+x+" "+y);
                         m_aPoint[m_iArrayIndex++] = x;
                         m_aPoint[m_iArrayIndex++] = y;
                         if (m_iArrayIndex==8){
@@ -400,6 +411,82 @@ public class ClassifyCamera extends AppCompatActivity {
 
         return mat;
     }
+    public static Mat imageToMatFaster(Image image) {
+
+        int width = image.getWidth();
+        int height = image.getHeight();
+        int ySize = width*height;
+        int uvSize = width*height/4;
+
+        byte[] nv21 = new byte[ySize + uvSize*2];
+
+        ByteBuffer yBuffer = image.getPlanes()[0].getBuffer(); // Y
+        ByteBuffer uBuffer = image.getPlanes()[1].getBuffer(); // U
+        ByteBuffer vBuffer = image.getPlanes()[2].getBuffer(); // V
+
+        int rowStride = image.getPlanes()[0].getRowStride();
+        assert(image.getPlanes()[0].getPixelStride() == 1);
+
+        int pos = 0;
+
+        if (rowStride == width) { // likely
+            yBuffer.get(nv21, 0, ySize);
+            pos += ySize;
+        }
+        else {
+            long yBufferPos = width - rowStride; // not an actual position
+            for (; pos<ySize; pos+=width) {
+                yBufferPos += rowStride - width;
+                yBuffer.position((int)yBufferPos);
+                yBuffer.get(nv21, pos, width);
+            }
+        }
+
+        rowStride = image.getPlanes()[2].getRowStride();
+        int pixelStride = image.getPlanes()[2].getPixelStride();
+
+        assert(rowStride == image.getPlanes()[1].getRowStride());
+        assert(pixelStride == image.getPlanes()[1].getPixelStride());
+
+        if (pixelStride == 2 && rowStride == width && uBuffer.get(0) == vBuffer.get(1)) {
+            // maybe V an U planes overlap as per NV21, which means vBuffer[1] is alias of uBuffer[0]
+            byte savePixel = vBuffer.get(1);
+            vBuffer.put(1, (byte)0);
+            if (uBuffer.get(0) == 0) {
+                vBuffer.put(1, (byte)255);
+                if (uBuffer.get(0) == 255) {
+                    vBuffer.put(1, savePixel);
+                    vBuffer.get(nv21, ySize, uvSize);
+
+                    //return nv21; // shortcut
+                    Mat mat = new Mat(height + height / 2, width, CV_8UC1);
+                    mat.put(0, 0, nv21);
+                    return mat;
+                }
+            }
+
+            // unfortunately, the check failed. We must save U and V pixel by pixel
+            vBuffer.put(1, savePixel);
+        }
+
+        // other optimizations could check if (pixelStride == 1) or (pixelStride == 2),
+        // but performance gain would be less significant
+
+        for (int row=0; row<height/2; row++) {
+            for (int col=0; col<width/2; col++) {
+                int vuPos = col*pixelStride + row*rowStride;
+                nv21[pos++] = vBuffer.get(vuPos);
+                nv21[pos++] = uBuffer.get(vuPos);
+            }
+        }
+
+        //return nv21;
+        Mat mat = new Mat(height + height / 2, width, CV_8UC1);
+        mat.put(0, 0, nv21);
+
+        return mat;
+    }
+
 
     protected void createCameraPreview() {
         try {
@@ -409,10 +496,9 @@ public class ClassifyCamera extends AppCompatActivity {
             Surface surface = new Surface(texture);
             int screenWidth = this.getApplicationContext().getResources().getDisplayMetrics().widthPixels;
             int screenHeight = this.getApplicationContext().getResources().getDisplayMetrics().heightPixels;
-            int caph = 0, capw = 0;
-            m_iTextureViewHeight = textureView.getHeight();
-            m_iTextureViewWidth = textureView.getWidth();
 
+//            m_iTextureViewHeight = textureView.getHeight();
+//            m_iTextureViewWidth = textureView.getWidth();
 
             ImageReader reader = ImageReader.newInstance(screenWidth, screenHeight, ImageFormat.YUV_420_888, 4);
             ImageReader.OnImageAvailableListener readerListener = new ImageReader.OnImageAvailableListener() {
@@ -437,35 +523,46 @@ public class ClassifyCamera extends AppCompatActivity {
                         //long t1 = System.currentTimeMillis();
                         //Log.i(TAG, "timing t01:"+(t1-t0));
                         mYuv = imageToMat(image);
-                        if (m_iCameraOrientation == 270) {
-                            // Rotate clockwise 270 degrees
-                            Core.flip(mYuv.t(), mYuv, 0);
-                        } else if (m_iCameraOrientation == 180) {
-                            // Rotate clockwise 180 degrees
-                            Core.flip(mYuv, mYuv, -1);
-                        } else if (m_iCameraOrientation == 90) {
-                            //  90 dRotate clockwiseegrees
-                            Core.flip(mYuv.t(), mYuv, 1);
-                        }
-                        int width = mYuv.width();// image.getWidth();
-                        int height = mYuv.height();//image.getHeight();
+                        //mYuv = imageToMatFaster(image);
+
                         //long t2 = System.currentTimeMillis();
                        // Log.i(TAG, "timing t12:"+(t2-t1));
                         //mYuv = imageToMatSimple(image);
 
                         //Mat mGray = new Mat();
-                        Mat mRGB = new Mat();
+                        //Mat mRGB = new Mat();
                         //cvtColor(mYuv, mGray, Imgproc.COLOR_YUV2GRAY_NV21, 3);
                         cvtColor(mYuv, mBGR, Imgproc.COLOR_YUV2BGR_I420, 3);
-                        cvtColor(mYuv, mRGB, Imgproc.COLOR_YUV2RGBA_I420, 4);
-                        frame = mRGB;
+                        //cvtColor(mYuv, mRGB, Imgproc.COLOR_YUV2RGBA_I420, 4);
+                        //frame = mRGB;
+                        int width = mBGR.width();// image.getWidth();
+                        int height = mBGR.height();//image.getHeight();
+                        Log.i(TAG, "before roate height width:"+width+" "+height);
+                        if (m_iCameraOrientation == 270) {
+                            // Rotate clockwise 270 degrees
+                            //Core.flip(mBGR.t(), mBGR, 0);
+                            Core.rotate(mBGR, mBGR, Core.ROTATE_90_COUNTERCLOCKWISE);
+                        } else if (m_iCameraOrientation == 180) {
+                            // Rotate clockwise 180 degrees
+                            //Core.flip(mBGR, mBGR, -1);
+                            Core.rotate(mBGR, mBGR, Core.ROTATE_180);
+                        } else if (m_iCameraOrientation == 90) {
+                            //  90 dRotate clockwiseegrees
+                            //Core.flip(mBGR.t(), mBGR, 1);
+                            Core.rotate(mBGR, mBGR, Core.ROTATE_90_CLOCKWISE);
+                        }
+                        width = mBGR.width();// image.getWidth();
+                        height = mBGR.height();//image.getHeight();
                         //long t3 = System.currentTimeMillis();
                         //Log.i(TAG, "timing t23:"+(t3-t2));
                         double rate = Math.sqrt((300.*400)/(width*height));
                         int neww = (int)(width*rate);
                         int newh = (int)(height*rate);
-
+                        Log.i(TAG, "neww newh1:"+neww + "    "+newh+"  height width:"+width+" "+height);
                         Imgproc.resize(mBGR,imResized, new org.opencv.core.Size(neww, newh));
+                        neww = imResized.width();
+                        newh = imResized.height();
+                        Log.i(TAG, "neww newh2:"+neww + "    "+newh);
                         bgbmp = Bitmap.createBitmap(imResized.width(), imResized.height(), Bitmap.Config.ARGB_8888);
 
                         //get quadrilateral mask
@@ -486,12 +583,25 @@ public class ClassifyCamera extends AppCompatActivity {
                         Mat mask = Mat.zeros(newh, neww, CV_8UC3);
                         Imgproc.fillPoly(mask, border, new Scalar(255,255,255));
                         Core.bitwise_and(imResized, mask, imResized);
-                        Utils.matToBitmap(imResized, bgbmp);
+                        Core.divide(mask, new Scalar(255,255,255), mask);//before i use (255,255,255),then Core.sumElems(mask).val:1,0,0
+                        double[] sum_each_channel = Core.sumElems(mask).val;
+                        int nMaskPixelNum = (int) (sum_each_channel[0]+sum_each_channel[1]+sum_each_channel[2])/3;
+                        //int nMaskPixelNum = (int)(Core.sumElems()/3);//here I spent much time on
+                        Log.i("TAG", "nMaskPixelNum:"+nMaskPixelNum+ " sum:"+neww*newh+" mask channels:"+mask.channels());
+                        Log.i(TAG, " maxVal:"+ Core.minMaxLoc(mask.reshape(1, (int)mask.total())).maxVal);
+
+                        Mat mrgba = new Mat();
+                        cvtColor(imResized, mrgba, Imgproc.COLOR_BGR2RGBA, 4);
+                        Utils.matToBitmap(mrgba, bgbmp);
                         backSub.apply(imResized, fgMask);
+                        Mat dkernel = Imgproc.getStructuringElement(Imgproc.MORPH_DILATE, new org.opencv.core.Size(5, 5), new Point(2, 2));
+                        Mat ekernel = Imgproc.getStructuringElement(Imgproc.MORPH_ERODE, new org.opencv.core.Size(5, 5), new Point(2, 2));
+                        Imgproc.erode(fgMask, fgMask, ekernel);
+                        Imgproc.dilate(fgMask, fgMask, dkernel);
                         fgbmp = Bitmap.createBitmap(fgMask.width(), fgMask.height(), Bitmap.Config.ARGB_8888);
                         Utils.matToBitmap(fgMask, fgbmp);
                         fgbmp = Bitmap.createScaledBitmap(fgbmp, fgView.getWidth(), fgView.getHeight(), true);
-                        //long t4 = System.currentTimeMillis();
+                        //long t4 = System.currentTimeMillis()5
                         //t4 = System.currentTimeMillis();
                         //Log.i(TAG, "timing t34:"+(t4-t3));
                         TimeRunnable tr = new TimeRunnable() {
@@ -502,6 +612,7 @@ public class ClassifyCamera extends AppCompatActivity {
                                 //tv.setText(ss);
                                 //Imgproc.cvtColor(frame, frame, Imgproc.COLOR_GRAY2RGBA, 4);
                                 //long tui1 = System.currentTimeMillis();
+
                                 bgView.setImageBitmap(bgbmp);
                                 bgView.invalidate();
                                 bgView.setVisibility(View.VISIBLE);
@@ -553,11 +664,11 @@ public class ClassifyCamera extends AppCompatActivity {
                         int i =0;
                         //long t5 = System.currentTimeMillis();
                         //Log.i(TAG, "timing t45:"+(t5-t4));
-                        while (iterator.hasNext()) {
+                        while(iterator.hasNext()) {
                             MatOfPoint contour = iterator.next();
                             double area = Imgproc.contourArea(contour);
                             Log.i(TAG, "area:" + area + " area_sum:" + area_sum);
-                            if (area > 100) {
+                            if (area > 50) {
                                 area_sum += area;
                                 tm.put(area, i);
                             }
@@ -565,7 +676,8 @@ public class ClassifyCamera extends AppCompatActivity {
                         }
                         //long t6 = System.currentTimeMillis();
                         //Log.i(TAG, "timing t56:"+(t6-t5)+" curenttotal:"+(t6-t0));
-                        if (area_sum < 1000){
+                        Log.i(TAG, "area_sum/nMaskPixelNum:"+1.0*area_sum/nMaskPixelNum);
+                        if (1.0*area_sum/nMaskPixelNum < 0.01){
                             m_qAreaSum.clear();
                             m_qContourCenter.clear();
                             processing = false;
@@ -574,18 +686,18 @@ public class ClassifyCamera extends AppCompatActivity {
 
                         Iterator<Integer> it = tm.values().iterator();
                         i=0;
-                        double xs = 0, ys=0;
-                        int npt = 0;
-                        double dst = 0;
-                        while(it.hasNext()){
-                            Integer idx =  it.next();
-                            MatOfPoint c = contours.get(idx);
-                            Moments p = Imgproc.moments(c);
-                            int x = (int) (p.get_m10() / p.get_m00());
-                            int yy = (int) (p.get_m01() / p.get_m00());
-                            dst = Math.sqrt(Math.pow(x-width/2, 2) + Math.pow(yy-height/2, 2));
-                            break;
-                        }
+//                        double xs = 0, ys=0;
+//                        int npt = 0;
+//                        double dst = 0;
+//                        while(it.hasNext()){
+//                            Integer idx =  it.next();
+//                            MatOfPoint c = contours.get(idx);
+//                            Moments p = Imgproc.moments(c);
+//                            int x = (int) (p.get_m10() / p.get_m00());
+//                            int yy = (int) (p.get_m01() / p.get_m00());
+//                            dst = Math.sqrt(Math.pow(x-width/2, 2) + Math.pow(yy-height/2, 2));
+//                            break;
+//                        }
                         double ema = 0.0;
 
                         if (m_qAreaSum.size() < m_nFrames4BG) {
@@ -595,38 +707,44 @@ public class ClassifyCamera extends AppCompatActivity {
                             m_qAreaSum.add(area_sum);
                         }
                         ema = (area_sum - m_fLastEMA) * 2 / (1 + m_qAreaSum.size()) + m_fLastEMA;
-                        double dstEMA = (dst - m_fLastContour2Center)*2/(1+m_qAreaSum.size())+m_fLastContour2Center;
-                        if (ema >= m_fLastEMA) {
-                            m_nUpEMA++;
-                            m_nDownEMA = 0;
-                        } else {
-                            m_nUpEMA = 0;
-                            m_nDownEMA++;
-                        }
-                        m_nUpEMA = min(max(m_nUpEMA, -5), 5);
-                        m_nDownEMA = min(max(m_nDownEMA, -5), 5);
-                        if (area_sum > 100) {
-                            if (dstEMA >= m_fLastContour2Center) {
-                                m_nAwayFrame++;
-                            } else {
-                                m_nAwayFrame--;
-                            }
-                            m_nAwayFrame = min(max(m_nAwayFrame, -5), 5);
-                        }
-                        else{
-                            m_nUpEMA = 0;
-                            m_nDownEMA = 0;
-                            m_nAwayFrame = 0;
-                        }
-                        Log.i(TAG, "m_fLastEMA:"+m_fLastEMA+" ema:"+ema+" m_fLastContour2Center:"+
-                                m_fLastContour2Center+" dstEMA:"+dstEMA+ " m_nAwayFrame:"+m_nAwayFrame+
-                                "m_nDownEMA:"+m_nDownEMA+" area_sum:"+area_sum);
-                        m_fLastContour2Center = dstEMA;
-                        m_fLastEMA = ema;
-                        if (m_nDownEMA < 3 && (area_sum > width*height*0.1) || m_nAwayFrame > -1|| area_sum > width*height*0.4) {
+                        //double dstEMA = (dst - m_fLastContour2Center)*2/(1+m_qAreaSum.size())+m_fLastContour2Center;
+//                        if (ema >= m_fLastEMA) {
+//                            m_nUpEMA++;
+//                            m_nDownEMA = 0;
+//                        } else {
+//                            m_nUpEMA = 0;
+//                            m_nDownEMA++;
+//                        }
+//                        m_nUpEMA = min(max(m_nUpEMA, -5), 5);
+//                        m_nDownEMA = min(max(m_nDownEMA, -5), 5);
+//                        if (area_sum > 100) {
+//                            if (dstEMA >= m_fLastContour2Center) {
+//                                m_nAwayFrame++;
+//                            } else {
+//                                m_nAwayFrame--;
+//                            }
+//                            m_nAwayFrame = min(max(m_nAwayFrame, -5), 5);
+//                        }
+//                        else{
+//                            m_nUpEMA = 0;
+//                            m_nDownEMA = 0;
+//                            m_nAwayFrame = 0;
+//                        }
+//                        Log.i(TAG, "m_fLastEMA:"+m_fLastEMA+" ema:"+ema+" m_fLastContour2Center:"+
+//                                m_fLastContour2Center+" dstEMA:"+dstEMA+ " m_nAwayFrame:"+m_nAwayFrame+
+//                                "m_nDownEMA:"+m_nDownEMA+" area_sum:"+area_sum);
+//                        m_fLastContour2Center = dstEMA;
+                        double fg_rate = 1.0*ema / nMaskPixelNum;
+                        Log.i(TAG,"ema fg_rate:"+fg_rate+" currentrate:"+1.0*area_sum/nMaskPixelNum);
+                        if ( fg_rate > 0.2 && fg_rate < 0.001) {
                             processing = false;
                             return;
                         }
+                        m_fLastEMA = ema;
+//                        if (m_nDownEMA < 3 && (area_sum > nMaskPixelNum*0.1) || m_nAwayFrame > -1|| area_sum > nMaskPixelNum*0.4) {
+//                            processing = false;
+//                            return;
+//                        }
 
                         fullname="";
                         if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED))
@@ -650,7 +768,7 @@ public class ClassifyCamera extends AppCompatActivity {
                             //String sdCardDir = m_sExternalRoot + "/Android/data/facebook.f8demo/";
 
                             File dirFile = new File(sdCardDir);  //目录转化成文件夹
-                            if (!dirFile.exists() && false) {                //如果不存在，那就建立这个文件夹
+                            if (!dirFile.exists()) {                //如果不存在，那就建立这个文件夹
                                 //dirFile .mkdirs();
                                 Toast.makeText(ClassifyCamera.this,
                                         (dirFile.mkdirs() ? "Directory has been created" : "Directory not created"),
