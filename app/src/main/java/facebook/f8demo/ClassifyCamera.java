@@ -838,14 +838,15 @@ public class ClassifyCamera extends AppCompatActivity {
             assert map != null;
             //获得摄像机支持的图片尺寸中，和秤盘尺寸，最相近的，赋值给imageDimension
             //deeplabv3训练时候使用513x513
+            //w h:1280, 960
             android.util.Size[] dims = map.getOutputSizes(SurfaceTexture.class);
             double scaleRate = 33.0/23.0; //电子秤尺寸
             double minDiff = 200;//just a big size
-            final double smallerLength = 600.0;
+            final double smallerLength = 600.0, biggerLength = 1800.0;
             for (int i =0; i< dims.length;i++){
                 double w = dims[i].getWidth();
                 double h = dims[i].getHeight();
-                if (min(w,h)<smallerLength){
+                if (min(w,h)<smallerLength || max(w,h)>biggerLength){
                     continue;
                 }
                 double diff = abs(w/h-scaleRate);
