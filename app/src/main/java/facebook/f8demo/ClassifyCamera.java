@@ -494,13 +494,13 @@ public class ClassifyCamera extends AppCompatActivity {
             assert texture != null;
             texture.setDefaultBufferSize(imageDimension.getWidth(), imageDimension.getHeight());
             Surface surface = new Surface(texture);
-            int screenWidth = this.getApplicationContext().getResources().getDisplayMetrics().widthPixels;
-            int screenHeight = this.getApplicationContext().getResources().getDisplayMetrics().heightPixels;
+            //int screenWidth = this.getApplicationContext().getResources().getDisplayMetrics().widthPixels;
+            //int screenHeight = this.getApplicationContext().getResources().getDisplayMetrics().heightPixels;
 
 //            m_iTextureViewHeight = textureView.getHeight();
 //            m_iTextureViewWidth = textureView.getWidth();
 
-            ImageReader reader = ImageReader.newInstance(screenWidth, screenHeight, ImageFormat.YUV_420_888, 4);
+            ImageReader reader = ImageReader.newInstance(imageDimension.getWidth(), imageDimension.getHeight(), ImageFormat.YUV_420_888, 4);
             ImageReader.OnImageAvailableListener readerListener = new ImageReader.OnImageAvailableListener() {
                 @Override
                 public void onImageAvailable(ImageReader reader) {
@@ -836,7 +836,24 @@ public class ClassifyCamera extends AppCompatActivity {
             StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             m_iCameraOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
             assert map != null;
-            imageDimension = map.getOutputSizes(SurfaceTexture.class)[0];
+            //获得摄像机支持的图片尺寸中，和秤盘尺寸，最相近的，赋值给imageDimension
+            //deeplabv3训练时候使用513x513
+            android.util.Size[] dims = map.getOutputSizes(SurfaceTexture.class);
+            double scaleRate = 33.0/23.0; //电子秤尺寸
+            double minDiff = 200;//just a big size
+            final double smallerLength = 600.0;
+            for (int i =0; i< dims.length;i++){
+                double w = dims[i].getWidth();
+                double h = dims[i].getHeight();
+                if (min(w,h)<smallerLength){
+                    continue;
+                }
+                double diff = abs(w/h-scaleRate);
+                if (diff < minDiff){
+                    minDiff = diff;
+                    imageDimension = dims[i];
+                }
+            }
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(ClassifyCamera.this, new String[]{Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_CAMERA_PERMISSION);
                 return;
